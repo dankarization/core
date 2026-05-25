@@ -42,7 +42,9 @@ class TelegramBotNotifyEntity(TelegramBotEntity, NotifyEntity):
     ) -> None:
         """Initialize a notification entity."""
         super().__init__(
-            config_entry, NotifyEntityDescription(key=subentry.data[CONF_CHAT_ID])
+            config_entry,
+            NotifyEntityDescription(key=subentry.data[CONF_CHAT_ID]),
+            subentry,
         )
         self.chat_id = subentry.data[CONF_CHAT_ID]
         self._attr_name = subentry.title

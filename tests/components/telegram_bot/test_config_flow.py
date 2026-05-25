@@ -28,6 +28,7 @@ from homeassistant.config_entries import SOURCE_RECONFIGURE, SOURCE_USER, Config
 from homeassistant.const import CONF_API_KEY, CONF_PLATFORM, CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from tests.common import MockConfigEntry, pytest
 from tests.typing import ClientSessionGenerator
@@ -258,6 +259,78 @@ async def test_reconfigure_flow_change_api_key(
     assert result["reason"] == "reconfigure_successful"
     assert mock_webhooks_config_entry.data[CONF_API_KEY] == "new mock api key"
     assert mock_webhooks_config_entry.unique_id == "new mock api key"
+
+
+async def test_reconfigure_flow_change_api_key_keeps_existing_entities(
+    hass: HomeAssistant,
+    mock_register_webhook: None,
+    mock_external_calls: None,
+    mock_webhooks_config_entry: MockConfigEntry,
+) -> None:
+    """Test changing the API key does not orphan existing entities or devices."""
+    mock_webhooks_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_webhooks_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+
+    original_unique_ids = {
+        entry.unique_id
+        for entry in er.async_entries_for_config_entry(
+            entity_registry, mock_webhooks_config_entry.entry_id
+        )
+    }
+    original_device_ids = {
+        device.id
+        for device in dr.async_entries_for_config_entry(
+            device_registry, mock_webhooks_config_entry.entry_id
+        )
+    }
+
+    result = await mock_webhooks_config_entry.start_reconfigure_flow(hass)
+    assert result["step_id"] == "reconfigure"
+
+    with (
+        patch(
+            "homeassistant.components.telegram_bot.config_flow.Bot.get_me",
+            return_value=User(999999, "Otherbot", True),
+        ),
+        patch(
+            "homeassistant.components.telegram_bot.bot.Bot.get_me",
+            return_value=User(999999, "Otherbot", True),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_PLATFORM: PLATFORM_BROADCAST,
+                CONF_API_KEY: "new mock api key",
+                SECTION_ADVANCED_SETTINGS: {
+                    CONF_API_ENDPOINT: DEFAULT_API_ENDPOINT,
+                },
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    updated_unique_ids = {
+        entry.unique_id
+        for entry in er.async_entries_for_config_entry(
+            entity_registry, mock_webhooks_config_entry.entry_id
+        )
+    }
+    updated_device_ids = {
+        device.id
+        for device in dr.async_entries_for_config_entry(
+            device_registry, mock_webhooks_config_entry.entry_id
+        )
+    }
+
+    assert updated_unique_ids == original_unique_ids
+    assert updated_device_ids == original_device_ids
 
 
 @pytest.mark.parametrize(

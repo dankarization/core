@@ -33,6 +33,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import (
     config_validation as cv,
+    device_registry as dr,
     entity_registry as er,
     issue_registry as ir,
 )
@@ -919,6 +920,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TelegramBotConfigEntry) 
     )
     entry.runtime_data = notify_service
 
+    _async_cleanup_legacy_registry_entries(hass, entry)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -948,3 +951,32 @@ async def async_unload_entry(
         await entry.runtime_data.app.shutdown()
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+def _async_cleanup_legacy_registry_entries(
+    hass: HomeAssistant, entry: TelegramBotConfigEntry
+) -> None:
+    """Remove entities/devices created before stable Telegram registry IDs existed."""
+    entity_registry = er.async_get(hass)
+    desired_entity_unique_ids = {
+        f"{entry.entry_id}_update_event",
+        *(subentry.subentry_id for subentry in entry.subentries.values()),
+    }
+
+    for entity_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if entity_entry.platform not in {DOMAIN, "notify"}:
+            continue
+        if entity_entry.unique_id in desired_entity_unique_ids:
+            continue
+        entity_registry.async_remove(entity_entry.entity_id)
+
+    device_registry = dr.async_get(hass)
+    desired_device_identifier = (DOMAIN, entry.entry_id)
+
+    for device_entry in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        identifiers = {tuple(identifier) for identifier in device_entry.identifiers}
+        if desired_device_identifier in identifiers:
+            continue
+        if not any(identifier[0] == DOMAIN for identifier in identifiers):
+            continue
+        device_registry.async_remove_device(device_entry.id)
