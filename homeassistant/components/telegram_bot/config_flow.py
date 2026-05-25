@@ -117,6 +117,12 @@ STEP_RECONFIGURE_USER_DATA_SCHEMA: vol.Schema = vol.Schema(
                 translation_key="platforms",
             )
         ),
+        vol.Required(CONF_API_KEY): TextSelector(
+            TextSelectorConfig(
+                type=TextSelectorType.PASSWORD,
+                autocomplete="current-password",
+            )
+        ),
         vol.Required(SECTION_ADVANCED_SETTINGS): section(
             vol.Schema(
                 {
@@ -372,6 +378,7 @@ class TelegramBotConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_update_and_abort(
                 self._get_reconfigure_entry(),
                 title=self._bot_name,
+                unique_id=user_input[CONF_API_KEY],
                 data_updates=user_input,
             )
 
@@ -479,11 +486,14 @@ class TelegramBotConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] = DESCRIPTION_PLACEHOLDERS.copy()
 
-        user_input[CONF_API_KEY] = api_key
         bot_name = await self._validate_bot(
             user_input, errors, description_placeholders
         )
         self._bot_name = bot_name
+
+        if not errors and user_input[CONF_API_KEY] != api_key:
+            await self.async_set_unique_id(user_input[CONF_API_KEY])
+            self._abort_if_unique_id_configured()
 
         existing_api_endpoint: str = self._get_reconfigure_entry().data[
             CONF_API_ENDPOINT
@@ -535,7 +545,10 @@ class TelegramBotConfigFlow(ConfigFlow, domain=DOMAIN):
             await self._shutdown_bot()
 
             return self.async_update_and_abort(
-                self._get_reconfigure_entry(), title=bot_name, data_updates=user_input
+                self._get_reconfigure_entry(),
+                title=bot_name,
+                unique_id=user_input[CONF_API_KEY],
+                data_updates=user_input,
             )
 
         self._step_user_data.update(user_input)
@@ -651,6 +664,59 @@ class AllowedChatIdsSubEntryFlowHandler(ConfigSubentryFlow):
             ),
             description_placeholders=description_placeholders,
             errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Edit an existing allowed chat ID."""
+        entry = self._get_entry()
+        subentry = self._get_reconfigure_subentry()
+
+        if entry.state != ConfigEntryState.LOADED:
+            return self.async_abort(
+                reason="entry_not_loaded",
+                description_placeholders={"telegram_bot": entry.title},
+            )
+
+        if user_input is not None:
+            config_entry: TelegramBotConfigEntry = entry
+            bot = config_entry.runtime_data.bot
+            errors: dict[str, str] = {}
+            description_placeholders = DESCRIPTION_PLACEHOLDERS.copy()
+
+            chat_id: int = user_input[CONF_CHAT_ID]
+            try:
+                chat_info: ChatFullInfo = await bot.get_chat(chat_id)
+            except BadRequest:
+                errors["base"] = "chat_not_found"
+            except TelegramError as err:
+                errors["base"] = "telegram_error"
+                description_placeholders[ERROR_MESSAGE] = str(err)
+            else:
+                return self.async_update_and_abort(
+                    entry,
+                    subentry,
+                    title=chat_info.effective_name or str(chat_id),
+                    unique_id=str(chat_id),
+                    data={CONF_CHAT_ID: chat_id},
+                )
+
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self.add_suggested_values_to_schema(
+                    SUBENTRY_SCHEMA, user_input
+                ),
+                description_placeholders=description_placeholders,
+                errors=errors,
+            )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                SUBENTRY_SCHEMA,
+                subentry.data,
+            ),
         )
 
 

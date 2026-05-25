@@ -26,9 +26,11 @@
       },
       "reconfigure": {
         "data": {
+          "api_key": "[%key:common::config_flow::data::api_key%]",
           "platform": "[%key:component::telegram_bot::config::step::user::data::platform%]"
         },
         "data_description": {
+          "api_key": "[%key:component::telegram_bot::config::step::user::data_description::api_key%]",
           "platform": "[%key:component::telegram_bot::config::step::user::data_description::platform%]"
         },
         "description": "Reconfigure Telegram bot",
@@ -99,6 +101,16 @@
         "user": "Add allowed chat ID"
       },
       "step": {
+        "reconfigure": {
+          "data": {
+            "chat_id": "[%key:component::telegram_bot::config_subentries::allowed_chat_ids::step::user::data::chat_id%]"
+          },
+          "data_description": {
+            "chat_id": "[%key:component::telegram_bot::config_subentries::allowed_chat_ids::step::user::data_description::chat_id%]"
+          },
+          "description": "Edit the allowlisted Telegram chat ID.",
+          "title": "Edit chat"
+        },
         "user": {
           "data": {
             "chat_id": "Chat ID"

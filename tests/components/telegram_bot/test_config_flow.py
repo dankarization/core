@@ -24,7 +24,7 @@ from homeassistant.components.telegram_bot.const import (
     SUBENTRY_TYPE_ALLOWED_CHAT_IDS,
 )
 from homeassistant.components.telegram_bot.webhooks import TELEGRAM_WEBHOOK_URL
-from homeassistant.config_entries import SOURCE_USER, ConfigSubentry
+from homeassistant.config_entries import SOURCE_RECONFIGURE, SOURCE_USER, ConfigSubentry
 from homeassistant.const import CONF_API_KEY, CONF_PLATFORM, CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -100,6 +100,7 @@ async def test_reconfigure_flow_broadcast(
             result["flow_id"],
             {
                 CONF_PLATFORM: PLATFORM_BROADCAST,
+                CONF_API_KEY: "mock api key",
                 SECTION_ADVANCED_SETTINGS: {
                     CONF_PROXY_URL: "invalid",
                 },
@@ -117,6 +118,7 @@ async def test_reconfigure_flow_broadcast(
         result["flow_id"],
         {
             CONF_PLATFORM: PLATFORM_BROADCAST,
+            CONF_API_KEY: "mock api key",
             SECTION_ADVANCED_SETTINGS: {
                 CONF_PROXY_URL: "https://test",
             },
@@ -155,6 +157,7 @@ async def test_reconfigure_flow_webhooks(
         result["flow_id"],
         {
             CONF_PLATFORM: PLATFORM_WEBHOOKS,
+            CONF_API_KEY: "mock api key",
             SECTION_ADVANCED_SETTINGS: {
                 CONF_API_ENDPOINT: DEFAULT_API_ENDPOINT,
                 CONF_PROXY_URL: "https://test",
@@ -225,6 +228,38 @@ async def test_reconfigure_flow_webhooks(
     ]
 
 
+async def test_reconfigure_flow_change_api_key(
+    hass: HomeAssistant,
+    mock_register_webhook: None,
+    mock_external_calls: None,
+    mock_webhooks_config_entry: MockConfigEntry,
+) -> None:
+    """Test changing the API key via reconfigure flow."""
+    mock_webhooks_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_webhooks_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await mock_webhooks_config_entry.start_reconfigure_flow(hass)
+    assert result["step_id"] == "reconfigure"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLATFORM: PLATFORM_BROADCAST,
+            CONF_API_KEY: "new mock api key",
+            SECTION_ADVANCED_SETTINGS: {
+                CONF_API_ENDPOINT: DEFAULT_API_ENDPOINT,
+            },
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert mock_webhooks_config_entry.data[CONF_API_KEY] == "new mock api key"
+    assert mock_webhooks_config_entry.unique_id == "new mock api key"
+
+
 @pytest.mark.parametrize(
     ("side_effect", "expected_error", "expected_description_placeholders"),
     [
@@ -271,6 +306,7 @@ async def test_reconfigure_flow_logout_failed(
             result["flow_id"],
             {
                 CONF_PLATFORM: PLATFORM_BROADCAST,
+                CONF_API_KEY: "mock api key",
                 SECTION_ADVANCED_SETTINGS: {
                     CONF_API_ENDPOINT: "http://mock1",
                 },
@@ -289,6 +325,7 @@ async def test_reconfigure_flow_logout_failed(
             result["flow_id"],
             {
                 CONF_PLATFORM: PLATFORM_BROADCAST,
+                CONF_API_KEY: "mock api key",
                 SECTION_ADVANCED_SETTINGS: {
                     CONF_API_ENDPOINT: "http://mock2",
                 },
@@ -565,6 +602,41 @@ async def test_subentry_flow(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert subentry.subentry_type == SUBENTRY_TYPE_ALLOWED_CHAT_IDS
+    assert subentry.title == "mock title"
+    assert subentry.unique_id == "987654321"
+    assert subentry.data == {CONF_CHAT_ID: 987654321}
+
+
+async def test_subentry_flow_reconfigure(
+    hass: HomeAssistant,
+    mock_broadcast_config_entry: MockConfigEntry,
+    mock_external_calls: None,
+) -> None:
+    """Test reconfiguring an allowed chat ID."""
+    mock_broadcast_config_entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(mock_broadcast_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    subentry_id = list(mock_broadcast_config_entry.subentries)[0]
+
+    result = await hass.config_entries.subentries.async_init(
+        (mock_broadcast_config_entry.entry_id, SUBENTRY_TYPE_ALLOWED_CHAT_IDS),
+        context={"source": SOURCE_RECONFIGURE, "subentry_id": subentry_id},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        user_input={CONF_CHAT_ID: 987654321},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    subentry: ConfigSubentry = mock_broadcast_config_entry.subentries[subentry_id]
     assert subentry.title == "mock title"
     assert subentry.unique_id == "987654321"
     assert subentry.data == {CONF_CHAT_ID: 987654321}
