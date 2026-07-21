@@ -443,6 +443,144 @@ async def test_services(
     assert data == {}
 
 
+async def test_adjust_service_only_adjusts_on_lights(
+    hass: HomeAssistant,
+    mock_light_entities: list[MockLight],
+) -> None:
+    """Test adjust service only adjusts lights that are already on."""
+    setup_test_component_platform(hass, light.DOMAIN, mock_light_entities)
+
+    assert await async_setup_component(
+        hass, light.DOMAIN, {light.DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+
+    ent1, ent2, _ = mock_light_entities
+    ent1.supported_color_modes = {light.ColorMode.BRIGHTNESS}
+    ent1.color_mode = light.ColorMode.BRIGHTNESS
+    ent2.supported_color_modes = {light.ColorMode.BRIGHTNESS}
+    ent2.color_mode = light.ColorMode.BRIGHTNESS
+
+    await hass.services.async_call(
+        light.DOMAIN,
+        light.SERVICE_ADJUST,
+        {
+            ATTR_ENTITY_ID: [ent1.entity_id, ent2.entity_id],
+            light.ATTR_BRIGHTNESS: 128,
+        },
+        blocking=True,
+    )
+
+    assert light.is_on(hass, ent1.entity_id)
+    assert not light.is_on(hass, ent2.entity_id)
+    _, data = ent1.last_call("turn_on")
+    assert data == {light.ATTR_BRIGHTNESS: 128}
+    assert ent2.last_call("turn_on") is None
+
+
+async def test_adjust_service_rejects_zero_brightness(
+    hass: HomeAssistant,
+    mock_light_entities: list[MockLight],
+) -> None:
+    """Test adjust service rejects zero brightness values."""
+    setup_test_component_platform(hass, light.DOMAIN, mock_light_entities)
+
+    assert await async_setup_component(
+        hass, light.DOMAIN, {light.DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+
+    with pytest.raises(vol.MultipleInvalid):
+        await hass.services.async_call(
+            light.DOMAIN,
+            light.SERVICE_ADJUST,
+            {
+                ATTR_ENTITY_ID: mock_light_entities[0].entity_id,
+                light.ATTR_BRIGHTNESS: 0,
+            },
+            blocking=True,
+        )
+
+    with pytest.raises(vol.MultipleInvalid):
+        await hass.services.async_call(
+            light.DOMAIN,
+            light.SERVICE_ADJUST,
+            {
+                ATTR_ENTITY_ID: mock_light_entities[0].entity_id,
+                light.ATTR_BRIGHTNESS_PCT: 0,
+            },
+            blocking=True,
+        )
+
+
+async def test_adjust_service_rejects_step_resolving_to_zero(
+    hass: HomeAssistant,
+    mock_light_entities: list[MockLight],
+) -> None:
+    """Test adjust service rejects steps that resolve to zero brightness."""
+    setup_test_component_platform(hass, light.DOMAIN, mock_light_entities)
+
+    assert await async_setup_component(
+        hass, light.DOMAIN, {light.DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+
+    ent1 = mock_light_entities[0]
+    ent1.supported_color_modes = {light.ColorMode.BRIGHTNESS}
+    ent1.color_mode = light.ColorMode.BRIGHTNESS
+    ent1._attr_brightness = 10
+
+    with pytest.raises(
+        HomeAssistantError,
+        match="light.adjust does not accept zero brightness or white values",
+    ):
+        await hass.services.async_call(
+            light.DOMAIN,
+            light.SERVICE_ADJUST,
+            {
+                ATTR_ENTITY_ID: ent1.entity_id,
+                light.ATTR_BRIGHTNESS_STEP: -10,
+            },
+            blocking=True,
+        )
+
+
+async def test_adjust_service_ignores_off_lights_for_negative_steps(
+    hass: HomeAssistant,
+    mock_light_entities: list[MockLight],
+) -> None:
+    """Test step-based adjust keeps off lights as a no-op."""
+    setup_test_component_platform(hass, light.DOMAIN, mock_light_entities)
+
+    assert await async_setup_component(
+        hass, light.DOMAIN, {light.DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+
+    ent1, ent2, _ = mock_light_entities
+    ent1.supported_color_modes = {light.ColorMode.BRIGHTNESS}
+    ent1.color_mode = light.ColorMode.BRIGHTNESS
+    ent1.brightness = 100
+    ent2.supported_color_modes = {light.ColorMode.BRIGHTNESS}
+    ent2.color_mode = light.ColorMode.BRIGHTNESS
+
+    await hass.services.async_call(
+        light.DOMAIN,
+        light.SERVICE_ADJUST,
+        {
+            ATTR_ENTITY_ID: [ent1.entity_id, ent2.entity_id],
+            light.ATTR_BRIGHTNESS_STEP: -10,
+        },
+        blocking=True,
+    )
+
+    assert light.is_on(hass, ent1.entity_id)
+    assert not light.is_on(hass, ent2.entity_id)
+    _, data = ent1.last_call("turn_on")
+    assert data == {light.ATTR_BRIGHTNESS: 90}
+    assert ent2.last_call("turn_on") is None
+
+
 @pytest.mark.parametrize(
     ("profile_name", "last_call", "expected_data"),
     [

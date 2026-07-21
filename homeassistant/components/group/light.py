@@ -10,7 +10,10 @@ import voluptuous as vol
 from homeassistant.components import light
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
+    ATTR_BRIGHTNESS_STEP,
+    ATTR_BRIGHTNESS_STEP_PCT,
     ATTR_COLOR_MODE,
+    ATTR_COLOR_NAME,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_EFFECT_LIST,
@@ -129,6 +132,9 @@ def async_create_preview_light(
 FORWARDED_ATTRIBUTES = frozenset(
     {
         ATTR_BRIGHTNESS,
+        ATTR_BRIGHTNESS_STEP,
+        ATTR_BRIGHTNESS_STEP_PCT,
+        ATTR_COLOR_NAME,
         ATTR_COLOR_TEMP_KELVIN,
         ATTR_EFFECT,
         ATTR_FLASH,
@@ -180,6 +186,34 @@ class LightGroup(GroupEntity, LightEntity):
         await self.hass.services.async_call(
             light.DOMAIN,
             SERVICE_TURN_ON,
+            data,
+            blocking=True,
+            context=self._context,
+        )
+
+    async def async_adjust(self, **kwargs: Any) -> None:
+        """Forward the adjust command to on lights in the light group."""
+        data = {
+            key: value for key, value in kwargs.items() if key in FORWARDED_ATTRIBUTES
+        }
+        entity_ids = [
+            state.entity_id
+            for entity_id in self._entity_ids
+            if (state := self.hass.states.get(entity_id)) is not None
+            and (
+                state.state == STATE_ON
+                or isinstance(state.attributes.get(ATTR_ENTITY_ID), list)
+            )
+        ]
+        if not entity_ids:
+            return
+        data[ATTR_ENTITY_ID] = entity_ids
+
+        _LOGGER.debug("Forwarded adjust command: %s", data)
+
+        await self.hass.services.async_call(
+            light.DOMAIN,
+            light.SERVICE_ADJUST,
             data,
             blocking=True,
             context=self._context,

@@ -44,6 +44,7 @@ ENTITY_ID_FORMAT = DOMAIN + ".{}"
 PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA
 PLATFORM_SCHEMA_BASE = cv.PLATFORM_SCHEMA_BASE
 
+SERVICE_ADJUST = "adjust"
 
 # Color mode of the light
 ATTR_COLOR_MODE = "color_mode"
@@ -174,6 +175,8 @@ VALID_BRIGHTNESS = vol.All(vol.Coerce(int), vol.Clamp(min=0, max=255))
 VALID_BRIGHTNESS_PCT = vol.All(vol.Coerce(float), vol.Range(min=0, max=100))
 VALID_BRIGHTNESS_STEP = vol.All(vol.Coerce(int), vol.Clamp(min=-255, max=255))
 VALID_BRIGHTNESS_STEP_PCT = vol.All(vol.Coerce(float), vol.Clamp(min=-100, max=100))
+VALID_BRIGHTNESS_ADJUST = vol.All(vol.Coerce(int), vol.Range(min=1, max=255))
+VALID_BRIGHTNESS_PCT_ADJUST = vol.All(vol.Coerce(float), vol.Range(min=0.001, max=100))
 VALID_FLASH = vol.In([FLASH_SHORT, FLASH_LONG])
 
 LIGHT_TURN_ON_SCHEMA: VolDictType = {
@@ -214,6 +217,39 @@ LIGHT_TURN_ON_SCHEMA: VolDictType = {
 LIGHT_TURN_OFF_SCHEMA: VolDictType = {
     ATTR_TRANSITION: VALID_TRANSITION,
     ATTR_FLASH: VALID_FLASH,
+}
+
+LIGHT_ADJUST_SCHEMA: VolDictType = {
+    ATTR_TRANSITION: VALID_TRANSITION,
+    vol.Exclusive(ATTR_BRIGHTNESS, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_ADJUST,
+    vol.Exclusive(ATTR_BRIGHTNESS_PCT, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_PCT_ADJUST,
+    vol.Exclusive(ATTR_BRIGHTNESS_STEP, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_STEP,
+    vol.Exclusive(ATTR_BRIGHTNESS_STEP_PCT, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_STEP_PCT,
+    vol.Exclusive(ATTR_COLOR_NAME, COLOR_GROUP): cv.string,
+    vol.Exclusive(ATTR_COLOR_TEMP_KELVIN, COLOR_GROUP): cv.positive_int,
+    vol.Exclusive(ATTR_HS_COLOR, COLOR_GROUP): vol.All(
+        vol.Coerce(tuple),
+        vol.ExactSequence(
+            (
+                vol.All(vol.Coerce(float), vol.Range(min=0, max=360)),
+                vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+            )
+        ),
+    ),
+    vol.Exclusive(ATTR_RGB_COLOR, COLOR_GROUP): vol.All(
+        vol.Coerce(tuple), vol.ExactSequence((cv.byte,) * 3)
+    ),
+    vol.Exclusive(ATTR_RGBW_COLOR, COLOR_GROUP): vol.All(
+        vol.Coerce(tuple), vol.ExactSequence((cv.byte,) * 4)
+    ),
+    vol.Exclusive(ATTR_RGBWW_COLOR, COLOR_GROUP): vol.All(
+        vol.Coerce(tuple), vol.ExactSequence((cv.byte,) * 5)
+    ),
+    vol.Exclusive(ATTR_XY_COLOR, COLOR_GROUP): vol.All(
+        vol.Coerce(tuple), vol.ExactSequence((cv.small_float, cv.small_float))
+    ),
+    vol.Exclusive(ATTR_WHITE, COLOR_GROUP): vol.Any(True, VALID_BRIGHTNESS_ADJUST),
+    ATTR_EFFECT: cv.string,
 }
 
 
@@ -296,6 +332,8 @@ def filter_turn_on_params(light: LightEntity, params: dict[str, Any]) -> dict[st
     )
     if not brightness_supported(supported_color_modes):
         params.pop(ATTR_BRIGHTNESS, None)
+        params.pop(ATTR_BRIGHTNESS_STEP, None)
+        params.pop(ATTR_BRIGHTNESS_STEP_PCT, None)
     if ColorMode.COLOR_TEMP not in supported_color_modes:
         params.pop(ATTR_COLOR_TEMP_KELVIN, None)
     if ColorMode.HS not in supported_color_modes:
@@ -524,6 +562,44 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         await light.async_turn_off(**filter_turn_off_params(light, params))
 
+    async def async_handle_light_adjust_service(
+        light: LightEntity, call: ServiceCall
+    ) -> None:
+        """Handle adjusting a light without turning it on."""
+        if not call.data["params"]:
+            return
+
+        raw_params = dict(call.data["params"])
+
+        if light.__class__.async_adjust is not LightEntity.async_adjust:
+            params = filter_turn_on_params(light, raw_params)
+            if not params:
+                return
+            await light.async_adjust(**params)
+            return
+
+        has_step_adjust = (
+            ATTR_BRIGHTNESS_STEP in raw_params or ATTR_BRIGHTNESS_STEP_PCT in raw_params
+        )
+
+        if not light.is_on and has_step_adjust:
+            return
+
+        params = filter_turn_on_params(
+            light,
+            process_turn_on_params(hass, light, raw_params.copy()),
+        )
+
+        if not params:
+            return
+
+        if params.get(ATTR_BRIGHTNESS) == 0 or params.get(ATTR_WHITE) == 0:
+            raise HomeAssistantError(
+                "light.adjust does not accept zero brightness or white values"
+            )
+
+        await light.async_adjust(**params)
+
     async def async_handle_toggle_service(
         light: LightEntity, call: ServiceCall
     ) -> None:
@@ -536,6 +612,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         SERVICE_TURN_ON,
         vol.All(cv.make_entity_service_schema(LIGHT_TURN_ON_SCHEMA), preprocess_data),
         async_handle_light_on_service,
+    )
+
+    component.async_register_entity_service(
+        SERVICE_ADJUST,
+        vol.All(cv.make_entity_service_schema(LIGHT_ADJUST_SCHEMA), preprocess_data),
+        async_handle_light_adjust_service,
     )
 
     component.async_register_entity_service(
@@ -1062,3 +1144,9 @@ class LightEntity(ToggleEntity, cached_properties=CACHED_PROPERTIES_WITH_ATTR_):
 
         params = process_turn_off_params(self.hass, self, kwargs)
         await self.async_turn_off(**filter_turn_off_params(self, params))
+
+    async def async_adjust(self, **kwargs: Any) -> None:
+        """Adjust the entity without turning it on."""
+        if not self.is_on:
+            return
+        await self.async_turn_on(**kwargs)
