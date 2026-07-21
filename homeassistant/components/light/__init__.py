@@ -185,9 +185,7 @@ LIGHT_TURN_ON_SCHEMA: VolDictType = {
     vol.Exclusive(ATTR_BRIGHTNESS, ATTR_BRIGHTNESS): VALID_BRIGHTNESS,
     vol.Exclusive(ATTR_BRIGHTNESS_PCT, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_PCT,
     vol.Exclusive(ATTR_BRIGHTNESS_STEP, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_STEP,
-    vol.Exclusive(
-        ATTR_BRIGHTNESS_STEP_PCT, ATTR_BRIGHTNESS
-    ): VALID_BRIGHTNESS_STEP_PCT,
+    vol.Exclusive(ATTR_BRIGHTNESS_STEP_PCT, ATTR_BRIGHTNESS): VALID_BRIGHTNESS_STEP_PCT,
     vol.Exclusive(ATTR_COLOR_NAME, COLOR_GROUP): cv.string,
     vol.Exclusive(ATTR_COLOR_TEMP_KELVIN, COLOR_GROUP): cv.positive_int,
     vol.Exclusive(ATTR_HS_COLOR, COLOR_GROUP): vol.All(
@@ -581,14 +579,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             return
 
         has_step_adjust = (
-            ATTR_BRIGHTNESS_STEP in raw_params
-            or ATTR_BRIGHTNESS_STEP_PCT in raw_params
+            ATTR_BRIGHTNESS_STEP in raw_params or ATTR_BRIGHTNESS_STEP_PCT in raw_params
         )
 
-        if (
-            not light.is_on
-            and has_step_adjust
-        ):
+        if not light.is_on and has_step_adjust:
             return
 
         params = filter_turn_on_params(

@@ -397,7 +397,7 @@
       "name": "Adjust light",
       "sections": {
         "advanced_fields": {
-          "name": "[%key:component::light::common::section_advanced_fields_name%]"
+          "name": "Advanced options"
         }
       }
     },
